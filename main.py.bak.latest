@@ -1,0 +1,899 @@
+import gi
+import subprocess
+import threading
+import time
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw, GLib, Gdk  # noqa: E402
+
+
+class NetworkList(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.set_spacing(5)
+        self.set_homogeneous(False)
+        self.set_vexpand(True)
+        self.set_hexpand(True)
+        self.set_margin_bottom(10)
+        self.set_margin_end(10)
+
+        # Create a Header box to store the label and reload button
+        self.header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.header_box.set_spacing(5)
+        self.header_box.set_homogeneous(False)
+        self.header_box.set_hexpand(True)
+        self.header_box.set_valign(Gtk.Align.START)
+
+        # Create a large `Label` as a header
+        self.header_label = Gtk.Label()
+        self.header_label.set_markup("<span size='x-large'>Network Name (SSID)</span>")
+        self.header_label.set_halign(Gtk.Align.START)
+        self.header_label.set_hexpand(True)
+        self.header_box.append(self.header_label)
+
+        # Create a `Button` to reload the network list
+        self.reload_button = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
+        self.reload_button.set_tooltip_text("Reload Network List")
+        self.reload_button.set_halign(Gtk.Align.END)
+        self.reload_button.set_valign(Gtk.Align.CENTER)
+        self.reload_button.add_css_class("flat")
+        self.reload_button.connect("clicked", self.on_reload_button_clicked)
+        self.header_box.append(self.reload_button)
+
+        # Create `ListBox` for the network list
+        self.list_box = Gtk.ListBox()
+        self.list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.list_box.set_activate_on_single_click(False)
+        self.list_box.add_css_class("boxed-list")
+        self.list_box.set_vexpand(True)
+
+        # Create a ScrolledWindow for the ListBox
+        self.scrolled_window = Gtk.ScrolledWindow()
+        self.scrolled_window.set_policy(
+            Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC
+        )
+        self.scrolled_window.set_vexpand(True)
+        self.scrolled_window.add_css_class("card")
+        self.scrolled_window.set_child(self.list_box)
+
+        # CSS style for ListBox
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(b"""
+            .active-network {
+                background: alpha(@accent_bg_color, 0.1);
+                font-weight: bold;
+            }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        # Add items to the main box
+        self.append(self.header_box)
+        self.append(self.scrolled_window)
+
+        # Connect to selection changed signal
+        self.list_box.connect("row-selected", self.on_network_selected)
+        self.list_box.connect("row-activated", self.on_network_activated)
+
+        # Start a new thread to load networks
+        threading.Thread(target=self.load_networks, daemon=True).start()
+
+        # Auto-refresh every 15 seconds
+        GLib.timeout_add_seconds(15, self.on_reload_button_clicked, self.reload_button)
+
+    # Callback function for the reload button
+    def on_reload_button_clicked(self, button):
+        # Clear the existing list
+        self.list_box.remove_all()
+
+        # Start a new thread to load networks
+        threading.Thread(target=self.load_networks, daemon=True).start()
+
+        return True
+
+    # Callback function for the network selection
+    def on_network_selected(self, list_box, row):
+        if row is not None:
+            # Get the Box that contains the icon and label
+            box = row.get_child()
+
+            # Get the label (last child of the box)
+            label = box.get_last_child()
+            ssid = label.get_text()
+
+            # Find the DetailsBox instance and update it
+            parent = self.get_root()
+            if parent:
+                basic_page = (
+                    parent.get_content()
+                    .get_last_child()
+                    .get_first_child()
+                    .get_first_child()
+                )
+                details_box = basic_page.right_box
+                details_box.update_network_info(ssid)
+
+    def on_network_activated(self, list_box, row):
+        if row is None:
+            return
+
+        # Get the SSID from the row
+        box = row.get_child()
+        label = box.get_last_child()
+        ssid = label.get_text()
+
+        # Start a thread to handle network activation
+        threading.Thread(
+            target=self._handle_network_activation, args=(ssid,), daemon=True
+        ).start()
+
+    def _handle_network_activation(self, ssid):
+        # Check if this is the active network
+        try:
+            active_network = self.get_active_network()
+
+            if ssid == active_network:
+                # Disconnect from the active network
+                result = subprocess.run(
+                    ["nmcli", "connection", "down", ssid],
+                    capture_output=True,
+                    text=True,
+                )
+
+                if result.returncode != 0:
+                    GLib.idle_add(
+                        self._show_error_dialog,
+                        f"Failed to disconnect: {result.stderr}",
+                    )
+                    return
+
+            else:
+                # Check if the network is known
+                known_networks = self._get_known_networks()
+
+                if ssid in known_networks:
+                    # Connect to a known network
+                    result = subprocess.run(
+                        ["nmcli", "connection", "up", ssid],
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    if result.returncode != 0:
+                        # If connection fails, it might need a password
+                        connection_info = self._get_connection_info(ssid)
+
+                        if connection_info.get("requires-password", False):
+                            # Prompt for password
+                            password = self._prompt_for_password(ssid)
+                            if password:
+                                self._connect_with_password(ssid, password)
+                        else:
+                            GLib.idle_add(
+                                self._show_error_dialog,
+                                f"Failed to connect: {result.stderr}",
+                            )
+                else:
+                    # New network - prompt for password
+                    password = self._prompt_for_password(ssid)
+                    if password:
+                        self._connect_with_password(ssid, password)
+
+        except Exception as e:
+            GLib.idle_add(self._show_error_dialog, f"Error: {str(e)}")
+
+        finally:
+            # Refresh network list and password box in the main thread
+            GLib.idle_add(self._refresh_ui)
+
+    def _get_known_networks(self):
+        result = subprocess.run(
+            ["nmcli", "-f", "NAME", "connection", "show"],
+            capture_output=True,
+            text=True,
+        )
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def _get_connection_info(self, ssid):
+        try:
+            result = subprocess.run(
+                [
+                    "nmcli",
+                    "-f",
+                    "802-11-wireless-security.key-mgmt",
+                    "connection",
+                    "show",
+                    ssid,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            # Check if the network requires a key management method
+            requires_password = result.stdout.strip() not in ["", "none"]
+
+            return {"requires-password": requires_password}
+        except Exception:
+            return {"requires-password": True}
+
+    def _prompt_for_password(self, ssid):
+        """
+        Show a password dialog for the network
+        Returns the password or None if cancelled
+        """
+        # Use a queue to pass the result between threads
+        from queue import Queue
+        import queue
+
+        result_queue = Queue()
+
+        def create_dialog():
+            # Use Adw.MessageDialog for a more modern approach
+            dialog = Adw.MessageDialog.new(
+                self.get_root(),  # Parent window
+                f"Enter Password for {ssid}",  # Heading
+                "Please enter the network password to connect.",  # Body
+            )
+
+            # Add custom buttons
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("connect", "Connect")
+            dialog.set_close_response("cancel")
+            dialog.set_default_response("connect")
+
+            # Create a password entry
+            password_entry = Gtk.Entry()
+            password_entry.set_visibility(False)
+            password_entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+            password_entry.set_hexpand(True)
+
+            # Show/Hide Password Toggle
+            show_password = Gtk.CheckButton(label="Show Password")
+            show_password.connect(
+                "toggled", lambda btn: password_entry.set_visibility(btn.get_active())
+            )
+
+            # Create a box to hold entry and checkbox
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_box.set_spacing(10)
+            content_box.append(password_entry)
+            content_box.append(show_password)
+
+            # Set custom widget
+            dialog.set_extra_child(content_box)
+
+            def on_response(dialog, response):
+                if response == "connect":
+                    result_queue.put(password_entry.get_text())
+                else:
+                    result_queue.put(None)
+                dialog.destroy()
+
+            dialog.connect("response", on_response)
+
+            dialog.present()
+
+        def dialog_thread():
+            GLib.idle_add(create_dialog)
+
+        threading.Thread(target=dialog_thread, daemon=True).start()
+
+        try:
+            # Wait for the result with a timeout
+            return result_queue.get(timeout=300)  # 5-minute timeout
+        except queue.Empty:
+            return None
+
+    def _connect_with_password(self, ssid, password):
+        """
+        Connect to a network with a given password
+        """
+        max_attempts = 3
+        last_error = None
+
+        for attempt in range(max_attempts):
+            result = subprocess.run(
+                ["nmcli", "device", "wifi", "connect", ssid, "password", password],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                return True
+
+            last_error = result.stderr.strip()
+
+            # If connection fails and this is not the last attempt, prompt for password again
+            if attempt < max_attempts - 1:
+                # Show error in main thread and wait for it to complete
+                error_shown = threading.Event()
+                GLib.idle_add(
+                    lambda: self._show_error_dialog_with_callback(
+                        f"Connection failed: {last_error}", error_shown
+                    )
+                )
+                error_shown.wait()  # Wait for dialog to be closed
+
+                password = self._prompt_for_password(ssid)
+                if not password:
+                    break
+
+        # If all attempts fail, show final error
+        if last_error:
+            error_shown = threading.Event()
+            GLib.idle_add(
+                lambda: self._show_error_dialog_with_callback(
+                    f"Failed to connect after multiple attempts.\nLast error: {last_error}",
+                    error_shown,
+                )
+            )
+            error_shown.wait()
+        return False
+
+    def _show_error_dialog_with_callback(self, message, completed_event):
+        """
+        Show an error dialog with a given message using Adw.MessageDialog
+        and signal when it's closed
+        """
+        dialog = Adw.MessageDialog.new(
+            self.get_root(), "Network Connection Error", message
+        )
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+
+        def on_response(dialog, response):
+            dialog.destroy()
+            completed_event.set()
+
+        dialog.connect("response", on_response)
+        dialog.present()
+        return False  # Required for GLib.idle_add
+
+    def _refresh_ui(self):
+        # Reload networks
+        self.on_reload_button_clicked(self.reload_button)
+
+        # Find the parent window and get the password box
+        parent = self.get_root()
+        if parent:
+            basic_page = (
+                parent.get_content()
+                .get_last_child()
+                .get_first_child()
+                .get_first_child()
+            )
+            password_box = basic_page.password_entry
+            password_box.refresh_password()
+
+        return False
+
+    # Function to load networks in a separate thread
+    def load_networks(self):
+        # Get the network names
+        network_names = self.get_network_names()
+        unique_network_names = set(network_names)
+
+        # Get the active network
+        active_network = self.get_active_network()
+
+        # Update the UI in the main thread
+        GLib.idle_add(self.update_list_box, unique_network_names, active_network)
+
+    # Helper function to update the ListBox
+    def update_list_box(self, unique_network_names, active_network):
+        # Convert the set to a list and sort networks
+        network_list = list(unique_network_names)
+        if active_network in network_list:
+            network_list.remove(active_network)
+            network_list.insert(0, active_network)
+
+        active_network_row = None
+        for name in network_list:
+            if name:
+                row = Gtk.ListBoxRow()
+
+                # Create a horizontal box to hold the icon and label
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                box.set_spacing(6)  # Add some spacing between icon and label
+
+                # Create the label
+                label = Gtk.Label(label=name)
+                label.set_halign(Gtk.Align.START)
+                label.set_hexpand(True)
+
+                if name == active_network:
+                    # Add an icon for the active network
+                    icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
+                    icon.set_margin_start(6)
+                    box.append(icon)
+
+                    # Add a CSS class to style the active row
+                    row.add_css_class("active-network")
+                    active_network_row = row
+
+                box.append(label)
+                row.set_child(box)
+                self.list_box.append(row)
+
+        # Select the active network row
+        if active_network_row:
+            self.list_box.select_row(active_network_row)
+
+    # Helper function to get network SSIDs
+    def get_network_names(self):
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "SSID", "dev", "wifi"], stdout=subprocess.PIPE
+        )
+        return result.stdout.decode("utf-8").split("\n")
+
+    # Helper function to get the active network SSID
+    def get_active_network(self):
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"],
+            stdout=subprocess.PIPE,
+        )
+        return result.stdout.decode("utf-8").split("\n")[0]
+
+
+class PasswordBox(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.set_spacing(5)
+        self.set_homogeneous(False)
+        self.set_vexpand(False)
+        self.set_hexpand(True)
+        self.set_margin_top(10)
+        self.set_margin_end(10)
+        self.set_valign(Gtk.Align.END)
+
+        # Create a large `Label` as a header
+        self.header_label = Gtk.Label()
+        self.header_label.set_markup("<span size='x-large'>Password</span>")
+        self.header_label.set_halign(Gtk.Align.START)
+        self.header_label.set_hexpand(True)
+
+        # Create a box to store the password entry and visibility toggle
+        self.entry_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.entry_box.set_homogeneous(False)
+        self.entry_box.set_hexpand(True)
+        self.entry_box.set_valign(Gtk.Align.START)
+
+        # Create a `Entry` for the password
+        self.password_entry = Gtk.Entry()
+        self.password_entry.set_visibility(False)
+        self.password_entry.set_hexpand(True)
+        self.password_entry.set_editable(False)
+        self.entry_box.append(self.password_entry)
+
+        # Create a `Button` to toggle password visibility
+        self.visibility_button = Gtk.ToggleButton.new()
+        self.visibility_button_icon = Gtk.Image.new_from_icon_name(
+            "view-reveal-symbolic"
+        )
+        self.visibility_button.set_child(self.visibility_button_icon)
+        self.visibility_button.set_tooltip_text("Show Password")
+        self.visibility_button.set_margin_start(10)
+        self.visibility_button.set_halign(Gtk.Align.END)
+        self.visibility_button.set_valign(Gtk.Align.CENTER)
+        self.visibility_button.add_css_class("flat")
+        self.visibility_button.connect("toggled", self.on_visibility_button_toggled)
+        self.entry_box.append(self.visibility_button)
+
+        # Add items to the main box
+        self.append(self.header_label)
+        self.append(self.entry_box)
+
+        # Start a thread to load the password
+        threading.Thread(target=self.load_password, daemon=True).start()
+
+    # Callback function for the visibility button
+    def on_visibility_button_toggled(self, button):
+        if button.get_active():
+            # Try to authenticate using pkexec
+            try:
+                # Run a dummy command with pkexec to trigger authentication
+                result = subprocess.run(
+                    ["pkexec", "/bin/true"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+                if result.returncode == 0:
+                    # Authentication successful
+                    self.password_entry.set_visibility(True)
+                    self.visibility_button_icon.set_from_icon_name(
+                        "view-conceal-symbolic"
+                    )
+                    self.visibility_button.set_tooltip_text("Hide Password")
+                else:
+                    # Authentication failed or cancelled
+                    button.set_active(False)
+
+            except subprocess.SubprocessError:
+                # Handle authentication error
+                button.set_active(False)
+
+        else:
+            # Hide password
+            self.password_entry.set_visibility(False)
+            self.visibility_button_icon.set_from_icon_name("view-reveal-symbolic")
+            self.visibility_button.set_tooltip_text("Show Password")
+
+    # Function to load the password in a separate thread
+    def load_password(self):
+        # Get the password of the active network
+        password = self.get_active_password()
+
+        # Update the UI in the main thread
+        GLib.idle_add(self.update_password, password)
+
+    # Helper function to update the password entry
+    def update_password(self, password):
+        if password and password.strip():
+            self.password_entry.set_text(
+                password.split(":")[1] if ":" in password else password
+            )
+            self.password_entry.set_editable(False)
+        else:
+            self.password_entry.set_text("")
+            self.password_entry.set_editable(True)
+
+    # Function to get the password of the currently active network
+    def get_active_password(self):
+        try:
+            # First get the active connection name
+            name_result = subprocess.run(
+                ["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            if name_result.returncode != 0:
+                return ""
+
+            connection_name = name_result.stdout.decode("utf-8").split("\n")[0]
+
+            # Then get the password for this connection
+            result = subprocess.run(
+                [
+                    "nmcli",
+                    "-s",
+                    "-g",
+                    "802-11-wireless-security.psk",
+                    "connection",
+                    "show",
+                    connection_name,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            if result.returncode == 0:
+                return result.stdout.decode("utf-8").strip()
+            return ""
+
+        except subprocess.SubprocessError:
+            return ""
+
+    # Add method to manually refresh password
+    def refresh_password(self):
+        threading.Thread(target=self.load_password, daemon=True).start()
+
+
+class DetailsBox(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.set_spacing(5)
+        self.set_homogeneous(False)
+        self.set_vexpand(True)
+        self.set_hexpand(True)
+        self.set_margin_start(10)
+
+        # Create a Header box to store the label and reload button
+        self.header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.header_box.set_spacing(5)
+        self.header_box.set_homogeneous(False)
+        self.header_box.set_hexpand(True)
+        self.header_box.set_valign(Gtk.Align.START)
+
+        # Create a large `Label` as a header
+        self.header_label = Gtk.Label()
+        self.header_label.set_margin_top(5)
+        self.header_label.set_markup("<span size='x-large'>Details</span>")
+        self.header_label.set_halign(Gtk.Align.START)
+        self.header_label.set_hexpand(True)
+        self.header_box.append(self.header_label)
+
+        # Create a box to contain network information
+        self.info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.info_box.set_spacing(5)
+        self.info_box.set_margin_top(5)
+        self.info_box.set_homogeneous(False)
+        self.info_box.set_vexpand(True)
+        self.info_box.set_hexpand(True)
+        self.info_box.add_css_class("card")
+
+        # Create labels for network information
+        self.ssid_label = Gtk.Label()
+        self.signal_label = Gtk.Label()
+        self.security_label = Gtk.Label()
+        self.ipv4_label = Gtk.Label()
+        self.ipv6_label = Gtk.Label()
+        self.mac_label = Gtk.Label()
+
+        # Set alignment and margins for all labels
+        for label in [
+            self.ssid_label,
+            self.signal_label,
+            self.security_label,
+            self.ipv4_label,
+            self.ipv6_label,
+            self.mac_label,
+        ]:
+            label.set_halign(Gtk.Align.START)
+            label.set_margin_start(10)
+            label.set_margin_end(10)
+            label.set_margin_top(10)
+            label.set_margin_bottom(10)
+            self.info_box.append(label)
+
+        # Append items to the main box
+        self.append(self.header_box)
+        self.append(self.info_box)
+
+    # Function to update the network information
+    def update_network_info(self, ssid):
+        if not ssid:
+            self.clear_info()
+            return
+
+        # Start a new thread to fetch network information
+        threading.Thread(
+            target=self._fetch_network_info, args=(ssid,), daemon=True
+        ).start()
+
+    # Function to fetch the network information
+    def _fetch_network_info(self, ssid):
+        try:
+            # Get basic wifi information
+            wifi_result = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+
+            # Initialize variables
+            signal = "N/A"
+            security = "N/A"
+
+            # Parse wifi information
+            for line in wifi_result.stdout.splitlines():
+                fields = line.split(":")
+                if len(fields) >= 3 and fields[0] == ssid:
+                    signal = fields[1]
+                    security = fields[2] or "None"
+                    break
+
+            # Get connection details if this is the active connection
+            connection_result = subprocess.run(
+                ["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+
+            is_active = False
+            device = None
+
+            for line in connection_result.stdout.splitlines():
+                if line.startswith(f"{ssid}:"):
+                    is_active = True
+                    device = line.split(":")[1]
+                    break
+
+            # Use GLib.idle_add to update basic information in the main thread
+            GLib.idle_add(self.ssid_label.set_markup, f"<b>SSID:</b> {ssid}")
+            GLib.idle_add(
+                self.signal_label.set_markup, f"<b>Signal Strength:</b> {signal}%"
+            )
+            GLib.idle_add(
+                self.security_label.set_markup, f"<b>Security:</b> {security}"
+            )
+
+            # If this is the active connection, get more details
+            if is_active and device:
+                # Get IP and MAC information
+                device_result = subprocess.run(
+                    [
+                        "nmcli",
+                        "-t",
+                        "-f",
+                        "IP4.ADDRESS,IP6.ADDRESS,GENERAL.HWADDR",
+                        "device",
+                        "show",
+                        device,
+                    ],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                )
+
+                ipv4 = "Not connected"
+                ipv6 = "Not connected"
+                mac = "Unknown"
+
+                for line in device_result.stdout.splitlines():
+                    if line.startswith("IP4.ADDRESS"):
+                        ipv4 = line.split(":")[1].split("/")[0]
+                    elif line.startswith("IP6.ADDRESS"):
+                        ipv6 = line.split(":")[1].split("/")[0]
+                    elif line.startswith("GENERAL.HWADDR"):
+                        mac = line.split(":")[1]
+
+                # Update UI in the main thread
+                GLib.idle_add(
+                    self.ipv4_label.set_markup, f"<b>IPv4 Address:</b> {ipv4}"
+                )
+                GLib.idle_add(
+                    self.ipv6_label.set_markup, f"<b>IPv6 Address:</b> {ipv6}"
+                )
+                GLib.idle_add(self.mac_label.set_markup, f"<b>MAC Address:</b> {mac}")
+            else:
+                # Update UI in the main thread with not connected status
+                GLib.idle_add(
+                    self.ipv4_label.set_markup, "<b>IPv4 Address:</b> Not connected"
+                )
+                GLib.idle_add(
+                    self.ipv6_label.set_markup, "<b>IPv6 Address:</b> Not connected"
+                )
+                GLib.idle_add(self.mac_label.set_markup, "<b>MAC Address:</b> N/A")
+
+        except subprocess.SubprocessError:
+            # Update UI in the main thread
+            GLib.idle_add(self.clear_info)
+
+    # Helper function to clear all network information
+    def clear_info(self):
+        for label in [
+            self.ssid_label,
+            self.signal_label,
+            self.security_label,
+            self.ipv4_label,
+            self.ipv6_label,
+            self.mac_label,
+        ]:
+            label.set_text("")
+
+
+class BasicPage(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.set_spacing(5)
+        self.set_margin_top(20)
+        self.set_margin_bottom(20)
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_homogeneous(False)
+
+        # Create horizontal box for the main split
+        self.split_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.split_box.set_homogeneous(True)
+        self.split_box.set_spacing(5)
+
+        # Create left and right boxes for the split
+        self.left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.left_box.set_spacing(5)
+        self.left_box.set_vexpand(True)
+        self.left_box.set_homogeneous(False)
+
+        self.right_box = DetailsBox()
+
+        # Create top and bottom boxes for the left side
+        self.network_list = NetworkList()
+        self.password_entry = PasswordBox()
+
+        # Add top and bottom boxes to left container
+        self.left_box.append(self.network_list)
+        self.left_box.append(self.password_entry)
+
+        # Add the boxes to the main split box
+        self.split_box.append(self.left_box)
+        self.split_box.append(self.right_box)
+
+        # Add the split box to the main box
+        self.append(self.split_box)
+
+
+class AdvancedPage(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.set_spacing(0)
+        self.set_homogeneous(True)
+
+        # Create a `Label`
+        label = Gtk.Label(label="Use the terminal you moron.")
+
+        self.append(label)
+
+
+# Header Class using composition
+class Header(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
+        self.set_spacing(0)
+        self.set_valign(Gtk.Align.START)
+        self.set_halign(Gtk.Align.FILL)
+        self.set_homogeneous(True)
+
+        # Create the primary `HeaderBar`
+        self.header_bar = Adw.HeaderBar()
+        self.header_bar.set_show_end_title_buttons(True)
+        self.header_bar.set_show_title(True)
+
+        # Create the `ViewSwitcher`
+        self.view_switcher = Adw.ViewSwitcher()
+        self.view_switcher.set_policy(Adw.ViewSwitcherPolicy.WIDE)
+        self.view_switcher.set_hexpand(True)
+
+        # Create a `ViewStack`
+        self.view_stack = Adw.ViewStack()
+
+        # Create Page Instances
+        self.basic_page = BasicPage()
+        self.advanced_page = AdvancedPage()
+
+        # Add temporary pages to the `ViewStack`
+        self.view_stack.add_titled_with_icon(
+            self.basic_page, "basic", "Basic", "network"
+        )
+        self.view_stack.add_titled_with_icon(
+            self.advanced_page, "advanced", "Advanced", "settings"
+        )
+
+        # Set the `ViewStack` to the `ViewSwitcher`
+        self.view_switcher.set_stack(self.view_stack)
+
+        # Pack the HeaderBar
+        self.header_bar.set_title_widget(self.view_switcher)
+
+        # Append items to the Header box
+        self.append(self.header_bar)
+
+
+# Window Class (LibAdwaita)
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app)
+        self.set_default_size(600, 400)
+
+        # Header Bar
+        header = Header()
+
+        # `ViewStack` Box
+        view_stack_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        view_stack_box.append(header.view_stack)
+
+        # Add the Header and ViewStack Box to a main container
+        main_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_container.append(header)
+        main_container.append(view_stack_box)
+
+        # Set the main container as the window content
+        self.set_content(main_container)
+
+
+# Application Class (Gtk.Application)
+class Application(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="dev.furthestdrop.networkmanager")
+
+    def do_activate(self):
+        window = Window(self)
+        window.present()
+
+
+if __name__ == "__main__":
+    app = Application()
+    app.run(None)

@@ -1,0 +1,35 @@
+2024-11-24 20:18:54 | INFO | main:main:45 | Starting application
+2024-11-24 20:18:54 | INFO | main:__init__:30 | Initializing Application
+2024-11-24 20:18:54 | INFO | main:do_activate:38 | Activating main window
+2024-11-24 20:18:54 | DEBUG | nmcli:get_network_names:8 | Fetching available network SSIDs
+2024-11-24 20:18:54 | DEBUG | nmcli:get_network_names:18 | Found 38 networks
+2024-11-24 20:18:54 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:18:54 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:09 | DEBUG | nmcli:get_network_names:8 | Fetching available network SSIDs
+2024-11-24 20:19:09 | DEBUG | nmcli:get_network_names:18 | Found 36 networks
+2024-11-24 20:19:09 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:19:09 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:16 | DEBUG | nmcli:get_network_names:8 | Fetching available network SSIDs
+2024-11-24 20:19:16 | DEBUG | nmcli:get_network_names:18 | Found 36 networks
+2024-11-24 20:19:16 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:19:16 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:19 | DEBUG | nmcli:get_network_names:8 | Fetching available network SSIDs
+2024-11-24 20:19:19 | DEBUG | nmcli:get_network_names:18 | Found 36 networks
+2024-11-24 20:19:19 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:19:19 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:24 | DEBUG | nmcli:get_network_names:8 | Fetching available network SSIDs
+2024-11-24 20:19:24 | DEBUG | nmcli:get_network_names:18 | Found 36 networks
+2024-11-24 20:19:24 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:19:24 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:35 | DEBUG | nmcli:get_network_names:8 | Fetching available network SSIDs
+2024-11-24 20:19:38 | DEBUG | nmcli:get_network_names:18 | Found 39 networks
+2024-11-24 20:19:38 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:19:38 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:39 | DEBUG | nmcli:get_network_names:8 | Fetching available network SSIDs
+2024-11-24 20:19:39 | DEBUG | nmcli:get_network_names:18 | Found 39 networks
+2024-11-24 20:19:39 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:19:39 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:43 | DEBUG | nmcli:get_active_network:30 | Fetching active network
+2024-11-24 20:19:43 | DEBUG | nmcli:get_active_network:40 | Active network: Antalya
+2024-11-24 20:19:43 | INFO | nmcli:connect_to_network:52 | Attempting to connect to network: Teo’s iPhone
+2024-11-24 20:19:43 | DEBUG | nmcli:connect_to_network:58 | Connecting to Teo’s iPhone without password
