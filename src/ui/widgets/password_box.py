@@ -1,6 +1,8 @@
 import gi
-import subprocess
 import threading
+import subprocess
+
+from ...utils.nmcli import get_active_password
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -17,6 +19,9 @@ class PasswordBox(Gtk.Box):
 
         # Start a thread to load the password
         threading.Thread(target=self.load_password, daemon=True).start()
+
+        # Auto-refresh every 15 seconds
+        GLib.timeout_add_seconds(15, self.refresh_password)
 
     def setup_layout(self):
         """Configure base layout and containers"""
@@ -101,7 +106,7 @@ class PasswordBox(Gtk.Box):
 
     def load_password(self):
         """Load password in background thread"""
-        password = self.get_active_password()
+        password = get_active_password()
         GLib.idle_add(self.update_password, password)
 
     def update_password(self, password):
@@ -114,43 +119,6 @@ class PasswordBox(Gtk.Box):
         else:
             self.password_entry.set_text("")
             self.password_entry.set_editable(True)
-
-    def get_active_password(self):
-        """Get password for currently active network connection"""
-        try:
-            # First get the active connection name
-            name_result = subprocess.run(
-                ["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-
-            if name_result.returncode != 0:
-                return ""
-
-            connection_name = name_result.stdout.decode("utf-8").split("\n")[0]
-
-            # Then get the password for this connection
-            result = subprocess.run(
-                [
-                    "nmcli",
-                    "-s",
-                    "-g",
-                    "802-11-wireless-security.psk",
-                    "connection",
-                    "show",
-                    connection_name,
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-
-            if result.returncode == 0:
-                return result.stdout.decode("utf-8").strip()
-            return ""
-
-        except subprocess.SubprocessError:
-            return ""
 
     def refresh_password(self):
         """Manually trigger password refresh"""

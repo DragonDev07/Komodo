@@ -1,6 +1,6 @@
 import gi
-import subprocess
 import threading
+from ...utils.nmcli import get_network_info, get_device_info
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -92,92 +92,40 @@ class DetailsBox(Gtk.Box):
     def _fetch_network_info(self, ssid):
         """Fetch network information in background thread"""
         try:
-            # Get basic wifi information
-            wifi_result = subprocess.run(
-                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"],
-                stdout=subprocess.PIPE,
-                text=True,
-            )
-
-            # Initialize variables
-            signal = "N/A"
-            security = "N/A"
-
-            # Parse wifi information
-            for line in wifi_result.stdout.splitlines():
-                fields = line.split(":")
-                if len(fields) >= 3 and fields[0] == ssid:
-                    signal = fields[1]
-                    security = fields[2] or "None"
-                    break
-
-            # Get connection details if this is the active connection
-            connection_result = subprocess.run(
-                ["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"],
-                stdout=subprocess.PIPE,
-                text=True,
-            )
-
-            is_active = False
-            device = None
-
-            for line in connection_result.stdout.splitlines():
-                if line.startswith(f"{ssid}:"):
-                    is_active = True
-                    device = line.split(":")[1]
-                    break
+            info = get_network_info(ssid)
 
             # Update basic information in main thread
             GLib.idle_add(self.ssid_label.set_markup, f"<b>SSID:</b> {ssid}")
             GLib.idle_add(
-                self.signal_label.set_markup, f"<b>Signal Strength:</b> {signal}%"
+                self.signal_label.set_markup,
+                f"<b>Signal Strength:</b> {info['signal']}%",
             )
             GLib.idle_add(
-                self.security_label.set_markup, f"<b>Security:</b> {security}"
+                self.security_label.set_markup, f"<b>Security:</b> {info['security']}"
             )
 
             # If active connection, get more details
-            if is_active and device:
-                self._fetch_device_info(device)
+            if info["is_active"] and info["device"]:
+                self._fetch_device_info(info["device"])
             else:
                 self._show_disconnected_info()
 
-        except subprocess.SubprocessError:
+        except Exception:
             # Update UI in main thread
             GLib.idle_add(self.clear_info)
 
     def _fetch_device_info(self, device):
         """Fetch and update device-specific information"""
-        device_result = subprocess.run(
-            [
-                "nmcli",
-                "-t",
-                "-f",
-                "IP4.ADDRESS,IP6.ADDRESS,GENERAL.HWADDR",
-                "device",
-                "show",
-                device,
-            ],
-            stdout=subprocess.PIPE,
-            text=True,
-        )
-
-        ipv4 = "Not connected"
-        ipv6 = "Not connected"
-        mac = "Unknown"
-
-        for line in device_result.stdout.splitlines():
-            if line.startswith("IP4.ADDRESS"):
-                ipv4 = line.split(":")[1].split("/")[0]
-            elif line.startswith("IP6.ADDRESS"):
-                ipv6 = line.split(":")[1].split("/")[0]
-            elif line.startswith("GENERAL.HWADDR"):
-                mac = line.split(":")[1]
+        info = get_device_info(device)
 
         # Update UI in main thread
-        GLib.idle_add(self.ipv4_label.set_markup, f"<b>IPv4 Address:</b> {ipv4}")
-        GLib.idle_add(self.ipv6_label.set_markup, f"<b>IPv6 Address:</b> {ipv6}")
-        GLib.idle_add(self.mac_label.set_markup, f"<b>MAC Address:</b> {mac}")
+        GLib.idle_add(
+            self.ipv4_label.set_markup, f"<b>IPv4 Address:</b> {info['ipv4']}"
+        )
+        GLib.idle_add(
+            self.ipv6_label.set_markup, f"<b>IPv6 Address:</b> {info['ipv6']}"
+        )
+        GLib.idle_add(self.mac_label.set_markup, f"<b>MAC Address:</b> {info['mac']}")
 
     def _show_disconnected_info(self):
         """Show disconnected state in UI"""

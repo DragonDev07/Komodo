@@ -1,6 +1,7 @@
 import threading
 
 import gi
+from loguru import logger
 
 from ...utils.dialog import show_error_dialog
 from ...utils.nmcli import (
@@ -20,6 +21,7 @@ class NetworkList(Gtk.Box):
 
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        logger.debug("Initializing NetworkList")
         self.setup_layout()
         self.setup_styles()
         self.setup_signals()
