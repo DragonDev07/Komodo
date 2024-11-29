@@ -1,2 +1,20 @@
-**/*.log
-**/__pycache__/
+# Build directories
+build/
+dist/
+*.egg-info/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Log files
+*.log
+
+# Virtual environment
+venv/
+env/
+.env/
+
+# IDE specific files (VSCode)
+.vscode/
+*.code-workspace

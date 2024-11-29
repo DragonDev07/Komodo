@@ -1,16 +1,15 @@
-import gi
-import sys
 import os
+import sys
+import gi
 from loguru import logger
+from .ui import Window
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from .ui import Window
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("NM", "1.0")
-from gi.repository import Gtk, Adw, Gio  # noqa: E402
+from gi.repository import Adw, Gio, Gtk  # noqa: E402
 
 # Configure loguru
 logger.add(

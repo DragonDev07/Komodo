@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Komodo
+Comment=Network Manager GUI
+Exec=komodo
+Icon=komodo
+Terminal=false
+Type=Application
+Categories=Network;Settings;

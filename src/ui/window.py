@@ -1,5 +1,4 @@
 import gi
-
 from .header import Header
 
 gi.require_version("Gtk", "4.0")
