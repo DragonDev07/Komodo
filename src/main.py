@@ -14,7 +14,7 @@ from gi.repository import Gtk, Adw, Gio  # noqa: E402
 
 # Configure loguru
 logger.add(
-    "/tmp/Komodo/logs/Komodo.log",
+    "Komodo.log",
     rotation="10 MB",
     retention="30 days",
     level="DEBUG",

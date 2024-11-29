@@ -107,7 +107,7 @@ class NetworkList(Gtk.Box):
         threading.Thread(target=self.load_networks, daemon=True).start()
         # Store the timer ID so we can remove it later
         self.refresh_source_id = GLib.timeout_add_seconds(
-            15, self.on_reload_button_clicked, self.reload_button
+            5, self.on_reload_button_clicked, self.reload_button
         )
 
     def pause_monitoring(self):
@@ -120,13 +120,14 @@ class NetworkList(Gtk.Box):
         """Resume network monitoring"""
         if not self.refresh_source_id:
             self.refresh_source_id = GLib.timeout_add_seconds(
-                15, self.on_reload_button_clicked, self.reload_button
+                5, self.on_reload_button_clicked, self.reload_button
             )
 
     def on_reload_button_clicked(self, button):
         """Handle reload button clicks"""
         self.list_box.remove_all()
         threading.Thread(target=self.load_networks, daemon=True).start()
+        threading.Thread(target=self._update_password_box, daemon=True).start()
         return True
 
     def on_network_selected(self, list_box, row):
@@ -219,6 +220,19 @@ class NetworkList(Gtk.Box):
             details_box = basic_page.right_box
             details_box.update_network_info(ssid)
 
+    def _update_password_box(self):
+        """Update password box"""
+        parent = self.get_root()
+        if parent:
+            basic_page = (
+                parent.get_content()
+                .get_last_child()
+                .get_first_child()
+                .get_first_child()
+            )
+            password_box = basic_page.password_entry
+            password_box.refresh_password()
+
     def _handle_network_activation(self, ssid):
         """Handle network activation/deactivation"""
         try:
@@ -230,10 +244,8 @@ class NetworkList(Gtk.Box):
             else:
                 if not connect_to_network(ssid):
                     return
-
         except Exception as e:
             GLib.idle_add(show_error_dialog, self.get_root(), str(e))
-
         finally:
             GLib.idle_add(self._refresh_ui)
 
